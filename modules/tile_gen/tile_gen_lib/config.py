@@ -5,6 +5,13 @@ from pathlib import Path
 
 class Configuration:
     areas = ['planet', 'monaco']
+    
+    # Contour generation areas with bounding boxes (west, south, east, north)
+    contour_areas = {
+        'monaco': (7.38, 43.71, 7.45, 43.76),
+        'luxembourg': (5.73, 49.44, 6.53, 50.18),
+        'alps-sample': (6.5, 45.5, 7.5, 46.5),
+    }
 
     tile_gen_dir = Path('/data/ofm/tile_gen')
 

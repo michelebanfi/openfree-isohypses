@@ -6,6 +6,7 @@ from tile_gen_lib.btrfs import make_btrfs
 from tile_gen_lib.planetiler import run_planetiler
 from tile_gen_lib.rclone import make_indexes_for_bucket, upload_area
 from tile_gen_lib.set_version import check_and_set_version
+from tile_gen_lib.contour_gen import run_contour_generation, CONTOUR_AREAS
 
 
 now = datetime.now(timezone.utc)
@@ -72,6 +73,36 @@ def set_version(area, version):
     print(f'---\n{now}\nStarting set-version {area}')
 
     check_and_set_version(area, version)
+
+
+@cli.command()
+@click.argument('area', required=True, type=click.Choice(list(CONTOUR_AREAS.keys())))
+@click.option('--skip-download', is_flag=True, help='Skip terrain download, use cached tiles')
+@click.option('--skip-btrfs', is_flag=True, help='Skip btrfs image creation (for testing)')
+@click.option('--upload', is_flag=True, help='Upload after generation is complete')
+def make_contour_tiles(area, skip_download, skip_btrfs, upload):
+    """
+    Generate contour line tiles for a given area.
+    
+    Downloads terrain data from AWS, generates contour lines using GDAL,
+    and converts them to vector tiles using Tippecanoe.
+    
+    Available areas: monaco, luxembourg, alps-sample
+    """
+    
+    print(f'---\n{now}\nStarting make-contour-tiles {area}')
+    print(f'Options: skip_download={skip_download}, skip_btrfs={skip_btrfs}, upload={upload}')
+    
+    run_folder = run_contour_generation(area, skip_download=skip_download)
+    
+    if not skip_btrfs:
+        make_btrfs(run_folder)
+    
+    if upload:
+        upload_area(f'contour_{area}')
+    
+    print(f'\n=== Done! ===')
+    print(f'Run folder: {run_folder}')
 
 
 if __name__ == '__main__':
