@@ -124,6 +124,74 @@ def create_nginx_conf(*, template_path, local, domain):
     return curl_text
 
 
+def create_contour_locations(*, domain: str) -> tuple[str, str]:
+    """
+    Create nginx location blocks for contour tiles if enabled.
+    
+    Contour tiles are served from /mnt/ofm/contour_{area}-{version}/tiles/
+    at the URL path /contours/{z}/{x}/{y}.pbf
+    """
+    location_str = ''
+    curl_text = ''
+    
+    # Check if contours are enabled
+    if not config.ofm_config.get('generate_contours'):
+        return location_str, curl_text
+    
+    # Find contour directories in mnt_dir
+    for subdir in config.mnt_dir.iterdir():
+        if not subdir.is_dir():
+            continue
+        if not subdir.name.startswith('contour_'):
+            continue
+        
+        # Parse contour_area-version format
+        try:
+            name_part = subdir.name  # e.g., contour_monaco-20241229_120000_contour
+            area_version = name_part.split('contour_')[1]  # monaco-20241229_120000_contour
+            area = area_version.split('-')[0]  # monaco
+        except (IndexError, ValueError):
+            print(f'  Skipping invalid contour dir: {subdir.name}')
+            continue
+        
+        tiles_dir = subdir / 'tiles'
+        if not tiles_dir.is_dir():
+            print(f'  Skipping {subdir.name}: no tiles directory')
+            continue
+        
+        print(f'  Adding contour location for {area}')
+        
+        # Contour tiles location
+        location_str += f"""
+    # Contour tiles {area}
+    location /contours/ {{
+        alias {tiles_dir}/;
+        try_files $uri @empty_tile;
+        add_header Content-Encoding gzip;
+
+        expires 10y;
+
+        types {{
+            application/vnd.mapbox-vector-tile pbf;
+        }}
+
+        add_header 'Access-Control-Allow-Origin' '*' always;
+        add_header Cache-Control public;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+
+        add_header x-ofm-debug 'contour tiles {area}';
+    }}
+    """
+        
+        # Add curl test
+        curl_text += f'curl -sI https://{domain}/contours/12/2132/1493.pbf | sort\n'
+        
+        # Only use first contour area found (for now)
+        break
+    
+    return location_str, curl_text
+
+
 def create_location_blocks(*, local, domain):
     location_str = ''
     curl_text = ''
@@ -131,7 +199,15 @@ def create_location_blocks(*, local, domain):
     for subdir in config.mnt_dir.iterdir():
         if not subdir.is_dir():
             continue
-        area, version = subdir.name.split('-')
+        # Skip contour directories (handled separately)
+        if subdir.name.startswith('contour_'):
+            continue
+        
+        try:
+            area, version = subdir.name.split('-')
+        except ValueError:
+            print(f'  Skipping invalid dir: {subdir.name}')
+            continue
 
         location_str += create_version_location(
             area=area, version=version, mnt_dir=subdir, local=local, domain=domain
@@ -160,6 +236,11 @@ def create_location_blocks(*, local, domain):
                 # f'curl -H "Host: __LOCAL__" -I http://localhost/{path}\n'
                 f'curl -sI https://__DOMAIN__{path} | sort\n'
             )
+
+    # Add contour tiles location if enabled
+    contour_location, contour_curl = create_contour_locations(domain=domain)
+    location_str += contour_location
+    curl_text += contour_curl
 
     with open(config.nginx_confs / 'location_static.conf') as fp:
         location_str += '\n' + fp.read()
