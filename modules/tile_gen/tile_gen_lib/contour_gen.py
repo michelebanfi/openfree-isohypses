@@ -348,11 +348,65 @@ def run_contour_generation(area: str, skip_download: bool = False) -> Path:
     # Step 5: Add metadata
     add_contour_metadata(mbtiles_path, area)
     
-    # Step 6: Create osm_date file (required by btrfs.py)
+    # Step 6: Extract tiles from mbtiles (for btrfs creation)
+    tiles_dir = run_folder / 'tiles'
+    extract_tippecanoe_mbtiles(mbtiles_path, tiles_dir)
+    
+    # Step 7: Create osm_date file (required by btrfs.py)
     date_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     (run_folder / 'osm_date').write_text(date_str)
     
     print(f'\n=== Contour generation complete ===')
     print(f'Output: {mbtiles_path}')
+    print(f'Tiles directory: {tiles_dir}')
     
     return run_folder
+
+
+def extract_tippecanoe_mbtiles(mbtiles_path: Path, output_dir: Path) -> None:
+    """
+    Extract tiles from a Tippecanoe-generated mbtiles file.
+    
+    Tippecanoe uses 'images' and 'map' tables, with a 'tiles' view.
+    This differs from Planetiler's 'tiles_data' and 'tiles_shallow' tables.
+    """
+    import json
+    import sqlite3
+    
+    print(f'Extracting tiles from {mbtiles_path}...')
+    
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    conn = sqlite3.connect(mbtiles_path)
+    c = conn.cursor()
+    
+    # Get total tile count
+    total = c.execute('select count(*) from tiles').fetchone()[0]
+    print(f'  Extracting {total} tiles...')
+    
+    # Extract tiles from the tiles view
+    c.execute('select zoom_level, tile_column, tile_row, tile_data from tiles')
+    for i, row in enumerate(c, start=1):
+        z = row[0]
+        x = row[1]
+        # TMS to XYZ conversion (flip Y)
+        y = (1 << z) - 1 - row[2]
+        tile_data = row[3]
+        
+        tile_path = output_dir / str(z) / str(x) / f'{y}.pbf'
+        tile_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(tile_path, 'wb') as fp:
+            fp.write(tile_data)
+        
+        if i % 500 == 0 or i == total:
+            print(f'    Extracted {i}/{total} tiles')
+    
+    # Write metadata
+    metadata = dict(c.execute('select name, value from metadata').fetchall())
+    with open(output_dir.parent / 'metadata.json', 'w') as fp:
+        json.dump(metadata, fp, indent=2)
+    
+    conn.close()
+    print(f'  Extraction complete: {total} tiles')

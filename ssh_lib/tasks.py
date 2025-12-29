@@ -214,6 +214,10 @@ def upload_config_json(c):
 
     http_host_list = [h.strip() for h in dotenv_val('HTTP_HOST_LIST').split(',') if h.strip()]
 
+    # Contour generation settings
+    generate_contours = dotenv_val('GENERATE_CONTOURS').lower() == 'true'
+    contour_area = dotenv_val('CONTOUR_AREA').lower() if dotenv_val('CONTOUR_AREA') else 'monaco'
+
     config = {
         'domain_direct': domain_direct,
         'domain_roundrobin': domain_roundrobin,
@@ -223,6 +227,8 @@ def upload_config_json(c):
         'http_host_list': http_host_list,
         'telegram_token': dotenv_val('TELEGRAM_TOKEN'),
         'telegram_chat_id': dotenv_val('TELEGRAM_CHAT_ID'),
+        'generate_contours': generate_contours,
+        'contour_area': contour_area,
     }
 
     config_str = json.dumps(config, indent=2, ensure_ascii=False)

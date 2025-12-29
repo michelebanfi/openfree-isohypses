@@ -31,6 +31,7 @@ def create_fstab():
     print('  creating fstab')
     fstab_new = []
 
+    # Standard map tiles (planet, monaco)
     for area in ['planet', 'monaco']:
         area_dir = (config.runs_dir / area).resolve()
         if not area_dir.exists():
@@ -45,6 +46,29 @@ def create_fstab():
                 continue
 
             mnt_folder = config.mnt_dir / f'{area}-{version_str}'
+            mnt_folder.mkdir(exist_ok=True, parents=True)
+
+            fstab_new.append(f'{btrfs_file} {mnt_folder} btrfs loop,ro 0 0\n')
+            print(f'  created fstab entry for {mnt_folder}')
+
+    # Contour tiles (contour_monaco, contour_luxembourg, etc.)
+    for subdir in config.runs_dir.iterdir():
+        if not subdir.is_dir():
+            continue
+        if not subdir.name.startswith('contour_'):
+            continue
+
+        area_dir = subdir.resolve()
+        versions = sorted(area_dir.iterdir())
+        for version in versions:
+            version_str = version.name
+            btrfs_file = area_dir / version_str / 'tiles.btrfs'
+            if not btrfs_file.is_file():
+                print(f"  {btrfs_file} doesn't exist, skipping")
+                continue
+
+            # Mount as contour_area-version (e.g., contour_monaco-20241229_120000)
+            mnt_folder = config.mnt_dir / f'{subdir.name}-{version_str}'
             mnt_folder.mkdir(exist_ok=True, parents=True)
 
             fstab_new.append(f'{btrfs_file} {mnt_folder} btrfs loop,ro 0 0\n')

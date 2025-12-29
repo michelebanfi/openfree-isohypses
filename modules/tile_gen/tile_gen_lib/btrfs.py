@@ -8,16 +8,37 @@ from .utils import python_venv_executable
 
 
 IMAGE_SIZE = '200G'
+CONTOUR_IMAGE_SIZE = '1G'  # Contour tiles are much smaller
 
 
-def make_btrfs(run_folder: Path):
+def make_btrfs(run_folder: Path, is_contour: bool = False):
+    """
+    Create a btrfs image from the tiles.
+    
+    For Planetiler output: extracts from tiles.mbtiles using extract_mbtiles.py
+    For contour tiles: uses pre-extracted tiles/ directory
+    
+    Args:
+        run_folder: Path to the run folder containing tiles
+        is_contour: If True, tiles are already extracted in tiles/ directory
+    """
     os.chdir(run_folder)
 
     cleanup_folder(run_folder)
+    
+    # Check if this is a contour run (tiles directory exists)
+    tiles_dir = run_folder / 'tiles'
+    if tiles_dir.is_dir() and any(tiles_dir.iterdir()):
+        is_contour = True
+        print('Detected pre-extracted tiles (contour mode)')
+
+    # Select image size based on tile type
+    image_size = CONTOUR_IMAGE_SIZE if is_contour else IMAGE_SIZE
+    print(f'Using image size: {image_size}')
 
     # make an empty file that's definitely bigger then the current OSM output
     for image in ['image.btrfs', 'image2.btrfs']:
-        subprocess.run(['fallocate', '-l', IMAGE_SIZE, image], check=True)
+        subprocess.run(['fallocate', '-l', image_size, image], check=True)
         subprocess.run(['mkfs.btrfs', '-m', 'single', image], check=True, capture_output=True)
 
     for image, mount in [('image.btrfs', 'mnt_rw'), ('image2.btrfs', 'mnt_rw2')]:
@@ -41,22 +62,47 @@ def make_btrfs(run_folder: Path):
 
         subprocess.run(['sudo', 'chown', 'ofm:ofm', '-R', mount], check=True)
 
-    # extract mbtiles
-    extract_script = config.tile_gen_scripts_dir / 'extract_mbtiles.py'
-    with open('extract_out.log', 'w') as out, open('extract_err.log', 'w') as err:
-        subprocess.run(
-            [
-                python_venv_executable(),
-                extract_script,
-                'tiles.mbtiles',
-                'mnt_rw/extract',
-            ],
-            check=True,
-            stdout=out,
-            stderr=err,
-        )
-
-    shutil.copy('mnt_rw/extract/osm_date', '.')
+    if is_contour:
+        # For contour tiles: copy pre-extracted tiles directly
+        print('Copying pre-extracted contour tiles...')
+        extract_dir = Path('mnt_rw/extract')
+        subprocess.run(['sudo', 'mkdir', '-p', str(extract_dir)], check=True)
+        subprocess.run(['sudo', 'chown', 'ofm:ofm', str(extract_dir)], check=True)
+        
+        # Copy tiles directory using sudo
+        subprocess.run(['sudo', 'cp', '-r', str(tiles_dir), str(extract_dir / 'tiles')], check=True)
+        
+        # Copy metadata if exists
+        metadata_file = run_folder / 'metadata.json'
+        if metadata_file.exists():
+            subprocess.run(['sudo', 'cp', str(metadata_file), str(extract_dir / 'metadata.json')], check=True)
+        
+        # Copy osm_date if exists
+        osm_date_file = run_folder / 'osm_date'
+        if osm_date_file.exists():
+            subprocess.run(['sudo', 'cp', str(osm_date_file), str(extract_dir / 'osm_date')], check=True)
+            shutil.copy(osm_date_file, '.')
+        
+        # Create empty log files for compatibility
+        Path('extract_out.log').touch()
+        Path('extract_err.log').touch()
+    else:
+        # For Planetiler: extract from mbtiles
+        extract_script = config.tile_gen_scripts_dir / 'extract_mbtiles.py'
+        with open('extract_out.log', 'w') as out, open('extract_err.log', 'w') as err:
+            subprocess.run(
+                [
+                    python_venv_executable(),
+                    extract_script,
+                    'tiles.mbtiles',
+                    'mnt_rw/extract',
+                ],
+                check=True,
+                stdout=out,
+                stderr=err,
+            )
+        
+        shutil.copy('mnt_rw/extract/osm_date', '.')
 
     # process logs
     subprocess.run('grep fixed extract_out.log > dedupl_fixed.log', shell=True)
@@ -66,6 +112,7 @@ def make_btrfs(run_folder: Path):
     with open('rsync_out.log', 'w') as out, open('rsync_err.log', 'w') as err:
         subprocess.run(
             [
+                'sudo',
                 'rsync',
                 '-avH',
                 '--max-alloc=4294967296',

@@ -34,6 +34,19 @@ def full_sync(force=False):
         btrfs_downloaded += download_area_version(area='planet', version='latest')
         btrfs_downloaded += download_area_version(area='planet', version='deployed')
 
+    # download contour tiles if enabled
+    # Note: Contour tiles are generated locally by tile_gen and placed in
+    # runs_dir/contour_{area}/ - no remote sync needed for self-hosting.
+    # For production, contours would be uploaded to the btrfs bucket and synced.
+    if config.ofm_config.get('generate_contours'):
+        contour_area = config.ofm_config.get('contour_area', 'monaco')
+        # Try to download from bucket if available (for production setup)
+        try:
+            btrfs_downloaded += download_area_version(area=f'contour_{contour_area}', version='latest')
+        except Exception as e:
+            # Contours not in bucket - they'll be generated locally by tile_gen
+            print(f'  Contour tiles not available in bucket (generate locally): {e}')
+
     if btrfs_downloaded or versions_changed or assets_changed or force:
         auto_clean_btrfs()
         auto_mount()
@@ -55,7 +68,16 @@ def auto_clean_btrfs():
 
     print('Running auto clean btrfs')
 
-    for area in config.areas:
+    # Get all areas: standard areas + any contour directories
+    areas_to_clean = list(config.areas)  # ['planet', 'monaco']
+    
+    # Add contour directories dynamically
+    if config.runs_dir.exists():
+        for subdir in config.runs_dir.iterdir():
+            if subdir.is_dir() and subdir.name.startswith('contour_'):
+                areas_to_clean.append(subdir.name)
+
+    for area in areas_to_clean:
         area_dir = config.runs_dir / area
         if not area_dir.is_dir():
             continue
